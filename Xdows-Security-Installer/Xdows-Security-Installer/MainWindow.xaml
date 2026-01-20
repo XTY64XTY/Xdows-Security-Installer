@@ -71,8 +71,7 @@
                     HorizontalAlignment="Right"
                     FontSize="14"
                     FontWeight="SemiBold"
-                    CornerRadius="4"
-                    Click="OnInstallClicked">
+                    CornerRadius="4">
                 <Button.Resources>
                     <ResourceDictionary>
                         <ResourceDictionary.ThemeDictionaries>
