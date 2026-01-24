@@ -4,5 +4,7 @@
     <Platform Name="x64" />
     <Platform Name="x86" />
   </Configurations>
-  <Project Path="Xdows-Security-Installer/Xdows-Security-Installer/Xdows-Security-Installer.vcxproj" Id="f028e86c-7783-4419-8411-1dae9f868093" />
+  <Project Path="Xdows-Security-Installer/Xdows-Security-Installer.vcxproj" Id="26fa9660-b1fd-4ba9-9c67-52b977081c34">
+    <Platform Solution="*|ARM64" Project="x64" />
+  </Project>
 </Solution>
