@@ -8,6 +8,7 @@
 #include <wininet.h>
 #include <shlobj.h>
 #include <filesystem>
+#include <cstdlib>
 
 namespace fs = std::filesystem;
 
@@ -112,7 +113,7 @@ bool DownloadFile(const std::string& url, const fs::path& outputPath) {
 
         if (elapsed >= 500) { // 每500毫秒更新一次速度
             double currentSpeed = (totalRead - lastRead) / (elapsed / 1000.0); // 字节/秒
-            lastRead = totalRead;
+            lastRead = static_cast<double>(totalRead);
             lastUpdate = currentTime;
 
             double remainingTime = 0;
@@ -201,11 +202,125 @@ std::string GetDownloadUrl() {
     std::cout << "下载 URL: " << downloadUrl << std::endl;
     return downloadUrl;
 }
-int main() {
-    try {
-		std::cout << "Xdows Security Installer\n";
-        std::cout << "By Xdows Software\n";
+static void showHelp() {
+    std::cout << "\n使用帮助:\n";
+    std::cout << "命令行参数\n";
+    std::cout << "  -help 输出此帮助，命令行无参数时的默认值\n";
+    std::cout << "  -download 下载最新版本的 Xdows Security 到临时目录\n";
+    std::cout << "  -install <zip路径> <安装位置> 将指定压缩包解压到安装位置，并将目录名 \"win-x64\" 重命名为 \"Xdows-Security\"\n";
+    std::cout << "  -uninstall <安装位置> 卸载指定安装位置的 Xdows-Security\n";
 
+}
+static int runInstall(const std::string& zipPath, const std::string& installPath) {
+    try {
+        fs::path zipP = zipPath;
+        fs::path destP = installPath;
+
+        if (!fs::exists(zipP) || !fs::is_regular_file(zipP)) {
+            std::cerr << "压缩包不存在: " << zipP.string() << std::endl;
+            return 1;
+        }
+
+        // 创建目标目录
+        fs::create_directories(destP);
+
+        // 使用 PowerShell 的 Expand-Archive 来解压（依赖 Windows PowerShell）
+        // 使用单引号包裹路径以减少转义问题
+        std::string cmd = "powershell -NoProfile -Command \"Expand-Archive -LiteralPath '" + zipP.string() + "' -DestinationPath '" + destP.string() + "' -Force\"";
+        std::cout << "正在解压: " << zipP.string() << " 到 " << destP.string() << std::endl;
+        int rc = std::system(cmd.c_str());
+        if (rc != 0) {
+            std::cerr << "解压失败，PowerShell 返回代码: " << rc << std::endl;
+            return 1;
+        }
+
+        // 在目标目录中查找名为 "win-x64" 的目录并重命名为 "Xdows-Security"
+        bool renamed = false;
+        for (auto& entry : fs::recursive_directory_iterator(destP)) {
+            try {
+                if (entry.is_directory() && entry.path().filename() == "win-x64") {
+                    fs::path newPath = entry.path().parent_path() / "Xdows-Security";
+                    if (fs::exists(newPath)) {
+                        std::cout << "目标目录已存在，正在删除: " << newPath.string() << std::endl;
+                        fs::remove_all(newPath);
+                    }
+                    fs::rename(entry.path(), newPath);
+                    std::cout << "已将 " << entry.path().string() << " 重命名为 " << newPath.string() << std::endl;
+                    renamed = true;
+                    break;
+                }
+            }
+            catch (const std::exception& e) {
+                // 继续尝试其他条目
+                std::cerr << "处理路径时出错: " << entry.path().string() << " -> " << e.what() << std::endl;
+            }
+        }
+
+        if (!renamed) {
+            std::cout << "未找到名为 'win-x64' 的目录，未执行重命名。" << std::endl;
+        }
+
+        std::cout << "安装完成。" << std::endl;
+        return 0;
+    }
+    catch (const std::exception& e) {
+        std::cerr << "错误: " << e.what() << std::endl;
+        return 1;
+    }
+}
+static int runUninstall(const std::string& installPath) {
+    try {
+        fs::path destP = installPath;
+        if (!fs::exists(destP)) {
+            std::cerr << "安装路径不存在: " << destP.string() << std::endl;
+            return 1;
+        }
+
+        // 卸载前确认
+        std::cout << "确定要卸载并删除安装目录 '" << destP.string() << "' ? (y/n): ";
+        std::string conf;
+        std::getline(std::cin, conf);
+        if (!(conf == "y" || conf == "Y")) {
+            std::cout << "已取消卸载。" << std::endl;
+            return 0;
+        }
+
+        // 删除安装目录
+        std::cout << "正在删除安装目录: " << destP.string() << std::endl;
+        fs::remove_all(destP);
+
+        // 提示是否删除 %LOCALAPPDATA%\Xdows-Security 目录
+        char* localAppData = nullptr;
+        size_t len = 0;
+        errno_t err = _dupenv_s(&localAppData, &len, "LOCALAPPDATA");
+        if (err == 0 && localAppData != nullptr) {
+            fs::path settingsRoot = fs::path(localAppData) / "Xdows-Security";
+            std::cout << "是否同时删除配置文件、信任区、隔离区等数据 (" << settingsRoot.string() << ")? (y/n): ";
+            std::string input;
+            std::getline(std::cin, input);
+            if (input == "y" || input == "Y") {
+                if (fs::exists(settingsRoot)) {
+                    fs::remove_all(settingsRoot);
+                    std::cout << "已删除: " << settingsRoot.string() << std::endl;
+                } else {
+                    std::cout << "未找到目录: " << settingsRoot.string() << std::endl;
+                }
+            }
+        } else {
+            std::cout << "无法获取 LOCALAPPDATA 环境变量，跳过删除设置。" << std::endl;
+        }
+        if (localAppData) free(localAppData);
+
+        std::cout << "卸载完成。" << std::endl;
+        return 0;
+    }
+    catch (const std::exception& e) {
+        std::cerr << "错误: " << e.what() << std::endl;
+        return 1;
+    }
+}
+static int runDownload() {
+    try {
         std::string downloadUrl = GetDownloadUrl();
 
         fs::path cacheDir = GetCacheDirectory();
@@ -238,5 +353,46 @@ int main() {
     catch (const std::exception& e) {
         std::cerr << "\n错误: " << e.what() << std::endl;
         return 1;
+    }
+}
+int main(int argc, char* argv[]) {
+    std::cout << "Xdows Security Installer\n";
+    std::cout << "By Xdows Software\n";
+
+    if (argc <= 1)
+    {
+        showHelp();
+        return 0;
+    }
+    for (int i = 1; i < argc; ++i) {
+    std::string arg = argv[i];
+        if (arg == "-help") {
+            showHelp();
+            return 0;
+        }else if (arg == "-download") {
+            return runDownload();
+        } else if (arg == "-install") {
+            if (i + 2 >= argc) {
+                std::cerr << "-install 需要两个参数: <zip路径> <安装位置>\n";
+                showHelp();
+                return 1;
+            }
+            std::string zipPath = argv[++i];
+            std::string installPath = argv[++i];
+            return runInstall(zipPath, installPath);
+        } else if (arg == "-uninstall") {
+            if (i + 1 >= argc) {
+                std::cerr << "-uninstall 需要一个参数: <安装位置>\n";
+                showHelp();
+                return 1;
+            }
+            std::string installPath = argv[++i];
+            return runUninstall(installPath);
+        }
+        else {
+            std::cerr << "未知参数: " << arg << std::endl;
+            showHelp();
+            return 1;
+		}
     }
 }
